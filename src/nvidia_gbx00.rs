@@ -1096,7 +1096,10 @@ impl Redfish for Bmc {
         self.s.get_evidence(url).await
     }
 
-    async fn set_host_privilege_level(&self, level: HostPrivilegeLevel) -> Result<(), RedfishError> {
+    async fn set_host_privilege_level(
+        &self,
+        level: HostPrivilegeLevel,
+    ) -> Result<(), RedfishError> {
         self.s.set_host_privilege_level(level).await
     }
 
@@ -1337,18 +1340,17 @@ impl UpdateParameters {
     pub fn new(component: ComponentType) -> UpdateParameters {
         let targets = match component {
             ComponentType::Unknown => None,
-            _ => Some(vec![match component {
-                ComponentType::BMC => "/redfish/v1/Chassis/BMC_0".to_string(),
-                ComponentType::EROTBMC => "/redfish/v1/Chassis/HGX_ERoT_BMC_0".to_string(),
-                ComponentType::EROTBIOS => {
-                    "/redfish/v1/UpdateService/FirmwareInventory/EROT_BIOS_0".to_string()
-                }
-                ComponentType::HGXBMC | ComponentType::UEFI => {
-                    "/redfish/v1/Chassis/HGX_Chassis_0".to_string()
-                }
-                _ => "unreachable".to_string(),
-            }]),
+            ComponentType::BMC => Some(vec![]),
+            ComponentType::EROTBMC => Some(vec!["/redfish/v1/Chassis/HGX_ERoT_BMC_0".to_string()]),
+            ComponentType::EROTBIOS => Some(vec![
+                "/redfish/v1/UpdateService/FirmwareInventory/EROT_BIOS_0".to_string(),
+            ]),
+            ComponentType::HGXBMC | ComponentType::UEFI => {
+                Some(vec!["/redfish/v1/Chassis/HGX_Chassis_0".to_string()])
+            }
+            _ => Some(vec!["unreachable".to_string()]),
         };
+
         UpdateParameters {
             targets,
             force_update: true,
@@ -1364,10 +1366,7 @@ mod tests {
     fn test_update_parameters_targets_all_variants() {
         let cases: Vec<(ComponentType, Option<Vec<String>>)> = vec![
             (ComponentType::Unknown, None),
-            (
-                ComponentType::BMC,
-                Some(vec!["/redfish/v1/Chassis/BMC_0".to_string()]),
-            ),
+            (ComponentType::BMC, Some(vec![])),
             (
                 ComponentType::EROTBMC,
                 Some(vec!["/redfish/v1/Chassis/HGX_ERoT_BMC_0".to_string()]),

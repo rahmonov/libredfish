@@ -62,6 +62,45 @@ impl Bmc {
     pub fn new(s: RedfishStandard) -> Result<Bmc, RedfishError> {
         Ok(Bmc { s })
     }
+
+    /// LenovoAMI-specific lockdown status via OEM ConfigBMC endpoint.
+    async fn lockdown_status_lenovo_ami(&self) -> Result<Status, RedfishError> {
+        const LOCKDOWN_FIELDS: &[&str] = &[
+            "LockoutHostControl",
+            "LockoutBiosVariableWriteMode",
+            "LockdownBiosSettingsChange",
+            "LockdownBiosUpgradeDowngrade",
+        ];
+
+        let (_status, body): (_, serde_json::Value) =
+            self.s.client.get("Managers/Self/Oem/ConfigBMC").await?;
+
+        let values: Vec<&str> = LOCKDOWN_FIELDS
+            .iter()
+            .map(|key| body.get(key).and_then(|v| v.as_str()).unwrap_or("unknown"))
+            .collect();
+
+        let message = LOCKDOWN_FIELDS
+            .iter()
+            .zip(&values)
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let is_locked = values.iter().all(|&v| v == "Enable");
+        let is_unlocked = values.iter().all(|&v| v == "Disable");
+
+        Ok(Status {
+            message,
+            status: if is_locked {
+                StatusInternal::Enabled
+            } else if is_unlocked {
+                StatusInternal::Disabled
+            } else {
+                StatusInternal::Partial
+            },
+        })
+    }
 }
 
 #[async_trait::async_trait]
@@ -314,23 +353,39 @@ impl Redfish for Bmc {
             .await
     }
 
-    /// AMI lockdown - controls KCS access, USB support, and Host Interface
+    /// AMI lockdown - controls KCS access, USB support, and Host Interface.
+    /// On LenovoAMI, uses the OEM ConfigBMC endpoint to control host lockout,
+    /// BIOS variable write, BIOS settings change, and BIOS upgrade/downgrade.
     async fn lockdown(&self, target: EnabledDisabled) -> Result<(), RedfishError> {
         use EnabledDisabled::*;
-        // (KCSACP, USB000, HostInterface enabled)
+        if self.s.vendor == Some(RedfishVendor::LenovoAMI) {
+            let value = match target {
+                Enabled => "Enable",
+                Disabled => "Disable",
+            };
+            let body = HashMap::from([
+                ("LockoutHostControl", value),
+                ("LockoutBiosVariableWriteMode", value),
+                ("LockdownBiosSettingsChange", value),
+                ("LockdownBiosUpgradeDowngrade", value),
+            ]);
+            return self
+                .s
+                .client
+                .post("Managers/Self/Oem/ConfigBMC", body)
+                .await
+                .map(|_| ());
+        }
+
         let (kcsacp, usb, hi_enabled) = match target {
             Enabled => ("Deny All", "Disabled", false),
             Disabled => ("Allow All", "Enabled", true),
         };
-
-        // Set BIOS attributes
         self.set_bios(HashMap::from([
             ("KCSACP".to_string(), kcsacp.into()),
             ("USB000".to_string(), usb.into()),
         ]))
         .await?;
-
-        // Set Host Interface
         let hi_body = HashMap::from([("InterfaceEnabled", hi_enabled)]);
         self.s
             .client
@@ -338,8 +393,13 @@ impl Redfish for Bmc {
             .await
     }
 
-    /// AMI lockdown_status - checks KCS access, USB support, and Host Interface
+    /// AMI lockdown status - checks KCS access, USB support, and Host Interface.
+    /// On LenovoAMI, reads the OEM ConfigBMC endpoint instead.
     async fn lockdown_status(&self) -> Result<Status, RedfishError> {
+        if self.s.vendor == Some(RedfishVendor::LenovoAMI) {
+            return self.lockdown_status_lenovo_ami().await;
+        }
+
         let bios = self.s.bios().await?;
         let url = format!("Systems/{}/Bios", self.s.system_id());
         let attrs = jsonmap::get_object(&bios, "Attributes", &url)?;

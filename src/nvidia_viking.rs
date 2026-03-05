@@ -300,15 +300,20 @@ impl Redfish for Bmc {
                 StatusInternal::Partial,
             ),
             (Some(kcs), Some(rf)) => {
-                let status = if kcs == *KCS_INTERFACE_DISABLE_DENY_ALL
-                /*&& bios.redfish_enable == Disabled */
-                {
+                let is_locked =
+                    kcs == KCS_INTERFACE_DISABLE_DENY_ALL || kcs == KCS_INTERFACE_DISABLE_DISABLED;
+                let is_unlocked = (kcs == KCS_INTERFACE_DISABLE_ALLOW_ALL
+                    || kcs == KCS_INTERFACE_DISABLE_ENABLED)
+                    && rf == EnabledDisabled::Enabled;
+
+                let status = if is_locked {
                     StatusInternal::Enabled
-                } else if kcs == KCS_INTERFACE_DISABLE_ALLOW_ALL && rf == EnabledDisabled::Enabled {
+                } else if is_unlocked {
                     StatusInternal::Disabled
                 } else {
                     StatusInternal::Partial
                 };
+
                 (
                     format!("ipmi_kcs_disable={}, redfish_enable={}.", kcs, rf),
                     status,
@@ -1015,7 +1020,6 @@ impl Redfish for Bmc {
     async fn set_utc_timezone(&self) -> Result<(), RedfishError> {
         self.s.set_utc_timezone().await
     }
-
 }
 
 impl Bmc {
@@ -1179,6 +1183,22 @@ impl Bmc {
         )))
     }
 
+    /// Returns the KCS values (lockdown_enabled, lockdown_disabled) based on
+    /// what the current firmware accepts. Newer firmware uses "Enabled"/"Disabled"
+    /// instead of "Deny All"/"Allow All".
+    fn kcs_lockdown_values(&self, current_kcs: &Option<String>) -> (&'static str, &'static str) {
+        match current_kcs.as_deref() {
+            Some(KCS_INTERFACE_DISABLE_ENABLED | KCS_INTERFACE_DISABLE_DISABLED) => (
+                KCS_INTERFACE_DISABLE_DISABLED,
+                KCS_INTERFACE_DISABLE_ENABLED,
+            ),
+            _ => (
+                KCS_INTERFACE_DISABLE_DENY_ALL,
+                KCS_INTERFACE_DISABLE_ALLOW_ALL,
+            ),
+        }
+    }
+
     async fn enable_lockdown(&self) -> Result<(), RedfishError> {
         // assuming that the viking bmc does not modify the suffixes
         self.check_firmware_version(
@@ -1194,8 +1214,11 @@ impl Bmc {
         )
         .await?;
 
+        let bios = self.get_bios().await?;
+        let (kcs_disable_deny, _) =
+            self.kcs_lockdown_values(&bios.attributes.kcs_interface_disable);
         let lockdown_attrs = BiosAttributes {
-            kcs_interface_disable: DEFAULT_KCS_INTERFACE_DISABLE.to_string().into(),
+            kcs_interface_disable: kcs_disable_deny.to_string().into(),
             redfish_enable: Disabled.into(), // todo: this should be disabled for the virtual usb nic, not yet implemented by dgx team
             ..Default::default()
         };
@@ -1206,8 +1229,11 @@ impl Bmc {
     }
 
     async fn disable_lockdown(&self) -> Result<(), RedfishError> {
+        let bios = self.get_bios().await?;
+        let (_, kcs_disable_allow) =
+            self.kcs_lockdown_values(&bios.attributes.kcs_interface_disable);
         let lockdown_attrs = BiosAttributes {
-            kcs_interface_disable: KCS_INTERFACE_DISABLE_ALLOW_ALL.to_string().into(),
+            kcs_interface_disable: kcs_disable_allow.to_string().into(),
             redfish_enable: Enabled.into(),
             ..Default::default()
         };

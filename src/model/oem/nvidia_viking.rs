@@ -27,6 +27,9 @@ pub const DEFAULT_NVIDIA_INFINITEBOOT: EnableDisable = EnableDisable::Enable;
 pub const DEFAULT_KCS_INTERFACE_DISABLE: &str = KCS_INTERFACE_DISABLE_DENY_ALL;
 pub const KCS_INTERFACE_DISABLE_DENY_ALL: &str = "Deny All";
 pub const KCS_INTERFACE_DISABLE_ALLOW_ALL: &str = "Allow All";
+// Newer firmware uses "Enabled"/"Disabled" instead of "Deny All"/"Allow All"
+pub const KCS_INTERFACE_DISABLE_DISABLED: &str = "Disabled";
+pub const KCS_INTERFACE_DISABLE_ENABLED: &str = "Enabled";
 pub const RECOMMENDED_BIOS_VERSION: &str = "01.05.03";
 pub const MINIMUM_BIOS_VERSION: &str = "1.01.03";
 pub const RECOMMENDED_BMC_FW_VERSION: &str = "24.09.17";
